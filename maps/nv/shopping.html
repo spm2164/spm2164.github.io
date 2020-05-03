@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+  <meta charset="utf-8">
+  <script type="text/javascript" src="https://d3js.org/d3.v5.min.js" charset="utf-8"></script>
+  <script src="https://d3js.org/topojson.v3.min.js"></script>
+  <style>
+    body {
+      margin:0;
+      position:fixed;
+      top:0;
+      right:0;
+      bottom:0;
+      left:0;
+      font-family: Helvetica; ;
+    }
+    text {
+      font-family: Helvetica;
+      color: var(--var-color-grey);
+      font-size: 1.2em;
+  	}
+    #tooltip {
+      line-height: 1;
+      padding: 6px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      border-radius: 4px;
+      font-size: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container" class="svg-container"></div>
+
+  <script type="text/javascript">
+
+    var w = 600,
+        h = 400;
+
+    var svg = d3.select("div#container").append("svg")
+          .attr("preserveAspectRatio", "xMinYMin meet")
+          .attr("viewBox", "0 0 " + w + " " + h)
+          .classed("svg-content", true);
+
+    var colors = ['#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac'];
+    var charts = ['food', 'auto', 'nightlife', 'shopping', 'fitness', 'selfcare', 'home', 'health'];
+
+    var center = [-4,504];
+    var rotate = [111,0];
+    var scale = 17250;
+    var state = 'nv';
+    var mapFile = state + "_pred.json";
+    var dataFile = state + "_set.csv";
+    var dataSet = 'shopping'
+    var errorType = dataSet + '_error';
+    var predictedType = dataSet + '_predicted'
+
+    var projection = d3.geoConicEqualArea().translate([w/2, h/2]).scale(scale).center(center).rotate(rotate);
+    var path = d3.geoPath().projection(projection);
+    var colorScale = d3.scaleSequential(d3.interpolateRdBu).domain([-50,50]);
+
+    function colorValue(currentValue, diffNeg, diffPos){
+        if (currentValue > 0) {
+          // use blue half of color scale
+          if(currentValue <= d3.quantile(diffPos,.25)){
+            return colors[4];
+          }
+          if(currentValue <= d3.quantile(diffPos,.5)){
+            return colors[5];
+          }
+          if(currentValue <= d3.quantile(diffPos,.75)){
+            return colors[6];
+          }
+          if(currentValue <= d3.quantile(diffPos,1)){
+            return colors[7];
+          }
+        }
+        if (currentValue <= 0) {
+          // use red half of color scale
+          if(currentValue <= d3.quantile(diffNeg,.25)){
+            return colors[0];
+          }
+          if(currentValue <= d3.quantile(diffNeg,.5)){
+            return colors[1];
+          }
+          if(currentValue <= d3.quantile(diffNeg,.75)){
+            return colors[2];
+          }
+          if(currentValue <= d3.quantile(diffNeg,1)){
+            return colors[3];
+          }
+        }
+        return colors[0];
+    }
+
+    var g = svg.append("g");
+
+    var azmap = d3.json(mapFile);
+    var values = d3.csv(dataFile);
+    var arrayNeg;
+    var arrayPos;
+
+    values.then(function(data){
+      var dataSelect = data.map(function(d){
+        return parseFloat(d[errorType]);
+      })
+      var zeroIndex = 0;
+
+      dataSelect = dataSelect.sort(function(a, b) {return a-b;});
+      while(dataSelect[zeroIndex]<0){
+        zeroIndex++;
+      }
+
+      arrayNeg = dataSelect.slice(0,zeroIndex-1);
+      arrayPos = dataSelect.slice(zeroIndex, dataSelect.length);
+    });
+
+    azmap.then(function(data) {
+      return g.selectAll("path")
+                .data(data.features)
+              .enter().append("path")
+                .attr("class", "tract")
+                .attr("d", path)
+                .attr("fill", function(data) {
+                  var errorAmt = data.properties[errorType];
+                  if (errorAmt == -666) {
+                    return "white";
+                  } else {
+                    return colorValue(errorAmt, arrayNeg, arrayPos);
+                  }
+                })
+                .style("fill-opacity", "0.85")
+                .style("stroke", "black")
+                .style("stroke-width", "0.3")
+                .on("mouseover", handleMouseOver)
+                .on("mouseout", handleMouseOut)
+                .on('mousemove', handleMouseMove);
+
+    });
+
+    var zoom = d3.zoom()
+                .scaleExtent([1, 8])
+                .on("zoom", function() {
+                  g.selectAll("path")
+                    .attr("transform", d3.event.transform)
+                });
+
+    svg.call(zoom);
+
+    d3.select('body')
+      .append('div')
+      .attr('id', 'tooltip')
+      .attr('style', 'position: absolute; opacity: 0');
+
+    function handleMouseOver(d, i) {
+      d3.select(this)
+        .style("fill-opacity", "1")
+        .style("stroke-width", "0.7");
+      d3.select('#tooltip')
+        .style('opacity', 1)
+        .html(function() {
+          var content = "<span style='margin-left: 2.5px;'><b>" + d.properties.geographic_area_name + "</b></span><br>";
+          content +=`
+                    <table style="margin-top: 2.5px;">
+                            <tr><td>Business type: </td><td style="text-align: right">` + dataSet.charAt(0).toUpperCase() + dataSet.slice(1) + `</td></tr>
+                            <tr><td>Actual: </td><td style="text-align: right">` + d3.format(".2f")(d.properties[dataSet]) + `</td></tr>
+                            <tr><td>Predicted: </td><td style="text-align: right">` + d3.format(".2f")(d.properties[predictedType]) + `</td></tr>
+                            <tr><td>Error: </td><td style="text-align: right">` + d3.format(".2f")(d.properties[errorType]) + `</td></tr>
+                    </table>
+                    `;
+          return content;
+        })
+    }
+
+    function handleMouseOut(d, i) {
+      d3.select(this)
+        .style("fill-opacity", "0.85")
+        .style("stroke-width", "0.3");
+      d3.select('#tooltip').style('opacity', 0);
+    }
+
+    function handleMouseMove() {
+      d3.select('#tooltip')
+        .style('left', (d3.event.pageX+10) + 'px')
+        .style('top', (d3.event.pageY+10) + 'px');
+    }
+
+  </script>
+
+</body>
+
+</html>
